@@ -5,6 +5,7 @@ import ApiMixin from '../mixins/apiMixin';
 import IndicatorStore from '../stores/indicatorStore';
 import LoadingError from '../components/loadingError';
 import LoadingIndicator from '../components/loadingIndicator';
+import StackedBarChart from '../components/stackedBarChart';
 import Switch from '../components/switch';
 import {t} from '../locale';
 import marked from '../utils/marked';
@@ -24,7 +25,6 @@ FilterSwitch.propTypes = {
   onToggle: React.PropTypes.func.isRequired,
   size: React.PropTypes.string.isRequired
 };
-
 
 const FilterRow = React.createClass({
   propTypes: {
@@ -202,15 +202,31 @@ const ProjectFilters = React.createClass({
   mixins: [ApiMixin],
 
   getInitialState() {
+    let until = Math.floor(new Date().getTime() / 1000);
+    let since = until - 3600 * 24 * 7;
+
     return {
       loading: true,
+      loadingStats: true,
       error: false,
+      statsError: false,
       filterList: [],
+      querySince: since,
+      queryUntil: until,
+      stats: null,
+      rawStatsData: null,
+      processedStats: false,
     };
   },
 
-  componentDidMount() {
+  componentWillMount() {
     this.fetchData();
+  },
+
+  componentDidUpdate(prevProps) {
+    if (!this.state.loadingStats && !this.state.stats) {
+      this.processStatsData();
+    }
   },
 
   fetchData() {
@@ -229,6 +245,40 @@ const ProjectFilters = React.createClass({
           loading: false
         });
       }
+    });
+
+    this.api.request(`/projects/${orgId}/${projectId}/stats/`, {
+      query: {
+        since: this.state.querySince,
+        until: this.state.queryUntil,
+        resolution: '1h',
+        stat: 'blacklisted',
+      },
+      success: (data) => {
+        this.setState({
+          loadingStats: false,
+          rawStatsData: data,
+        });
+      },
+      error: () => {
+        this.setState({
+          loadingStats: false,
+          statsError: true,
+        });
+      }
+    });
+  },
+
+  processStatsData() {
+    let points = [];
+    $.each(this.state.rawStatsData, (idx, point) => {
+      points.push({
+        x: point[0],
+        y: [point[1]],
+      });
+    });
+    this.setState({
+      stats: points,
     });
   },
 
@@ -273,7 +323,7 @@ const ProjectFilters = React.createClass({
   renderBody() {
     let body;
 
-    if (this.state.loading)
+    if (this.state.loading || this.state.loadingStats || !this.state.stats)
       body = this.renderLoading();
     else if (this.state.error)
       body = <LoadingError onRetry={this.fetchData} />;
@@ -296,6 +346,15 @@ const ProjectFilters = React.createClass({
 
     return (
       <div>
+        <div className="inbound-filters-stats">
+          <div className="bar-chart">
+            <StackedBarChart
+              points={this.state.stats}
+              height={50}
+              barClasses={['filtered']}
+              className="sparkline" />
+          </div>
+        </div>
         {this.state.filterList.map(filter => {
           let props = {
             key: filter.id,
